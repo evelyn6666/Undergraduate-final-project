@@ -1,0 +1,402 @@
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE ALL
+OBJECT MODULE PLACED IN .\Objects\all.obj
+COMPILER INVOKED BY: D:\keil\C51\BIN\C51.EXE all.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\all.lst)
+                    - TABS(2) OBJECT(.\Objects\all.obj)
+
+line level    source
+
+   1          #include"STC12C5A60S2.h"
+   2          #include"intrins.h"
+   3          #include"string.h"
+   4          #include "absacc.h"
+   5          #include "math.h"
+   6          #define FOSC 11059200L
+   7          #define BAUD 9600
+   8          #define uchar unsigned char 
+   9          #define uint unsigned int
+  10          void pid(void);
+  11          void delay20ms(void);
+  12          void delay6ms(void);
+  13          void system_init();                 //系统初始化
+  14          void displaywendu();
+  15          void lcdwrdata(uchar dat);          //lcd1602写数据函数
+  16          void lcdwrcom(uchar cdat);          //lcd1602写命令函数
+  17          void s1();
+  18          void s2();
+  19          void s3();
+  20          unsigned char BYTE;
+  21          unsigned int WORD;
+  22          unsigned int wd; 
+  23          unsigned char ge,shi,bai,qian,setge,setshi;   
+  24          sbit P20=P2^0;
+  25          sbit rs=P1^7;               //H数据，L命令
+  26          sbit lcden=P1^6;            //高脉冲使能，使能脉宽最小150ns
+  27          sbit key1=P3^4;
+  28          sbit key2=P3^5;
+  29          sbit key3=P3^6;
+  30          bit busy=0;
+  31          uint data time;             //声明变量，用于定时
+  32          uchar data t0_h,t0_l;       //存储定时器0的初值
+  33          char TK=100;                //声明采样周期变量，T=TK*10ms
+  34          char TC=0;                  //TK的变量
+  35          char SPEC;               //温度给定值
+  36          char IBAND=10;              //积分分离值
+  37          float kp=2.3;                 //比例系数
+  38          float ti=200;               //积分系数
+  39          float td=0;                 //微分系数
+  40          float Voltage0;
+  41          float YK;                     //温度值
+  42          char TKMARK,ADMARK;         //采样时刻标志，A/D完成标志
+  43          int AAA1,VAA;               //PWM高电平变量
+  44          int ADVALUE;                //A/D采样值变量
+  45          int temp,ss;
+  46          int cai_flag;
+  47          char EK,EK_1;               //当前和上一次的偏差值
+  48          float ZEK;                  //积分累加变量
+  49          char AEK,AEK_1;             //偏差的变化量
+  50          int UK;                     //当前时刻的D/A输出
+  51          
+  52          /** AD初始化程序 **/
+  53          void ad_init()
+  54          {
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 2   
+
+  55   1        P1ASF=0x01;             //选择P1.0口作为模拟功能A/D使用
+  56   1        ADC_RES = 0x00;         //清除AD转换结果寄存器
+  57   1        ADC_RESL = 0x00;
+  58   1        ADC_CONTR = 0x80;       //给ADC上电,转换周期为540个时钟周期,
+  59   1      }
+  60          
+  61          /** T0初始化程序 **/
+  62          void T0_init(void)
+  63          {
+  64   1        TMOD |= 0x01;            //使用模式1，16位定时器，使用"|"符号可以在使用多个定时器时不受影响        
+  65   1        EA=1;                    //总中断打开
+  66   1        ET0=1;                   //溢出中断打开  
+  67   1        TH0=(65536-10000)/256;   //给定初值，10ms
+  68   1        TL0=(65536-10000)%256;
+  69   1        //TR0=1;                   //启动定时器T0
+  70   1        IPH = IPH&0xFD;        
+  71   1        IP=IP|0x02;              //定时器T0中断设置为第1优先级
+  72   1      }
+  73          
+  74           void LCD_Write_String(unsigned char x,unsigned char y,unsigned char *s) 
+  75           { 
+  76   1        if (y == 0) 
+  77   1        {     
+  78   2         lcdwrcom(0x80 + x);    
+  79   2        }
+  80   1        else 
+  81   1        {      
+  82   2         lcdwrcom(0xC0 + x);     
+  83   2        }        
+  84   1       while (*s) 
+  85   1        {     
+  86   2         lcdwrcom( *s);     
+  87   2         s ++;     
+  88   2        }
+  89   1      }
+  90          
+  91          
+  92          void LCD_Write_Char(unsigned char x,unsigned char y,unsigned char Data) 
+  93          {     
+  94   1       if (y == 0) 
+  95   1       {     
+  96   2        lcdwrcom(0x80 + x);     
+  97   2       }    
+  98   1       else 
+  99   1       {     
+ 100   2        lcdwrcom(0xC0 + x);     
+ 101   2       }        
+ 102   1      lcdwrdata( Data);  
+ 103   1      }
+ 104          
+ 105          void system_init()
+ 106          { 
+ 107   1      /*******LCD初始化*********/
+ 108   1        lcdwrcom(0x38);         //0x38设置显示模式为：16X2 显示,5X7 点阵,8 位数据接口
+ 109   1        lcdwrcom(0x0c);         //打开显示光标闪烁
+ 110   1        lcdwrcom(0x06);
+ 111   1        lcdwrcom(0x01);
+ 112   1      }
+ 113          
+ 114          void delay20ms(void)            //误差 -0.000000000003us
+ 115          {
+ 116   1          unsigned char a,b,c;
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 3   
+
+ 117   1          for(c=193;c>0;c--)
+ 118   1              for(b=114;b>0;b--)
+ 119   1                  for(a=1;a>0;a--);
+ 120   1      }
+ 121          void delay6ms(void)             //误差 -0.018084490741us
+ 122          {
+ 123   1          unsigned char a,b;
+ 124   1          for(b=194;b>0;b--)
+ 125   1              for(a=84;a>0;a--);
+ 126   1          _nop_();              //if Keil,require use intrins.h
+ 127   1      }
+ 128          /********以下为显示函数定义*********/
+ 129          void lcdwrdata(uchar dat)     //写数据到LCD
+ 130          { rs=1;             //写数据时RS拉高
+ 131   1        lcden=1;
+ 132   1        P0=dat;
+ 133   1        delay6ms();
+ 134   1        lcden=0;
+ 135   1      delay6ms();
+ 136   1      }
+ 137          void lcdwrcom(uchar cdat)     //写指令数据到LCD  
+ 138          { rs=0;             //写指令时RS拉低
+ 139   1        lcden=1;
+ 140   1          P0=cdat;
+ 141   1      delay6ms();       //不加此延时将导致不能写入指令，但能写入显示数据
+ 142   1        lcden=0;
+ 143   1        delay6ms();
+ 144   1      }
+ 145          void displaywendu()
+ 146          {
+ 147   1         Voltage0=(float)temp*5/256;
+ 148   1         YK=Voltage0*20;
+ 149   1         wd=YK*100;
+ 150   1         ge=wd%10+0x30;                       //分别取温度十位、个位、小数点后一位、小数点后二位
+ 151   1         wd=wd/10;
+ 152   1         shi=wd%10+0x30;
+ 153   1         wd=wd/10;
+ 154   1         bai=wd%10+0x30;
+ 155   1         wd=wd/10;
+ 156   1         qian=wd%10+0x30; 
+ 157   1        LCD_Write_Char(4,0,qian);
+ 158   1        LCD_Write_Char(5,0,bai);  
+ 159   1        LCD_Write_Char(6,0,'.');
+ 160   1        LCD_Write_Char(7,0,shi);
+ 161   1        LCD_Write_Char(8,0,ge);
+ 162   1      }    
+ 163          
+ 164          void s1()                        //第一个按键：保温在70°C
+ 165          {
+ 166   1         ss=1;
+ 167   1         P20=1;
+ 168   1         SPEC=70;
+ 169   1         setge=SPEC%10+0x30;
+ 170   1         SPEC=SPEC/10;
+ 171   1         setshi=SPEC%10+0x30;
+ 172   1         LCD_Write_Char(1,0,'P'); 
+ 173   1         LCD_Write_Char(2,0,'V'); 
+ 174   1         LCD_Write_Char(3,0,':'); 
+ 175   1         LCD_Write_Char(9,0,0xDF);
+ 176   1         LCD_Write_Char(10,0,'C'); 
+ 177   1         LCD_Write_Char(1,1,'S'); 
+ 178   1         LCD_Write_Char(2,1,'V');
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 4   
+
+ 179   1         LCD_Write_Char(3,1,':');
+ 180   1         LCD_Write_Char(4,1,setshi); 
+ 181   1         LCD_Write_Char(5,1,setge); 
+ 182   1         LCD_Write_Char(6,1,0xDF); 
+ 183   1         LCD_Write_Char(7,1,'C');
+ 184   1         while(1)
+ 185   1          {
+ 186   2           TR0=1;                    //启动定时器 
+ 187   2           if(cai_flag==1)
+ 188   2             {
+ 189   3               TR0=0;
+ 190   3               cai_flag=0;
+ 191   3               displaywendu();
+ 192   3               ADC_CONTR = 0x88;                //启动ad转换
+ 193   3               while(!(ADC_CONTR&0x10));         //判断转换是否结束                
+ 194   3               ADC_CONTR = ADC_CONTR&0x80;       //清ADC_FLAG与ADC_START
+ 195   3               temp= ADC_RES;        //读转换结果
+ 196   3             }
+ 197   2           if(YK<70)
+ 198   2              P20=1;
+ 199   2           if(YK>70)
+ 200   2              P20=0;
+ 201   2           }     
+ 202   1      }
+ 203          void s2()
+ 204          {
+ 205   1         ss=2;  
+ 206   1         SPEC=99;
+ 207   1         setge=SPEC%10+0x30;
+ 208   1         SPEC=SPEC/10;
+ 209   1         setshi=SPEC%10+0x30;
+ 210   1         LCD_Write_Char(1,0,'P'); 
+ 211   1         LCD_Write_Char(2,0,'V'); 
+ 212   1         LCD_Write_Char(3,0,':'); 
+ 213   1         LCD_Write_Char(9,0,0xDF);
+ 214   1         LCD_Write_Char(10,0,'C'); 
+ 215   1         LCD_Write_Char(1,1,'S'); 
+ 216   1         LCD_Write_Char(2,1,'V');
+ 217   1         LCD_Write_Char(3,1,':');
+ 218   1         LCD_Write_Char(4,1,setshi); 
+ 219   1         LCD_Write_Char(5,1,setge); 
+ 220   1         LCD_Write_Char(6,1,0xDF); 
+ 221   1         LCD_Write_Char(7,1,'C');
+ 222   1         while(1)
+ 223   1         {     
+ 224   2           P20=1;
+ 225   2           TR0=1;
+ 226   2           if(cai_flag==1)
+ 227   2             {
+ 228   3              cai_flag=0;
+ 229   3              ADC_CONTR = 0x88;                //启动ad转换
+ 230   3              while(!(ADC_CONTR&0x10));        //判断转换是否结束                
+ 231   3              ADC_CONTR = ADC_CONTR&0x80;      //清ADC_FLAG与ADC_START
+ 232   3              temp = ADC_RES;                  //读转换结果
+ 233   3              displaywendu();  
+ 234   3             }
+ 235   2           if(YK>99)
+ 236   2           {
+ 237   3             P20=0;
+ 238   3             break;
+ 239   3           }
+ 240   2         }
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 5   
+
+ 241   1      }
+ 242          void s3()
+ 243          {
+ 244   1        ss=3;
+ 245   1        SPEC=50;
+ 246   1        setge=SPEC%10+0x30;
+ 247   1        SPEC=SPEC/10;
+ 248   1        setshi=SPEC%10+0x30;
+ 249   1         LCD_Write_Char(1,0,'P'); 
+ 250   1         LCD_Write_Char(2,0,'V'); 
+ 251   1         LCD_Write_Char(3,0,':'); 
+ 252   1         LCD_Write_Char(9,0,0xDF);
+ 253   1         LCD_Write_Char(10,0,'C'); 
+ 254   1         LCD_Write_Char(1,1,'S'); 
+ 255   1         LCD_Write_Char(2,1,'V');
+ 256   1         LCD_Write_Char(3,1,':');
+ 257   1         LCD_Write_Char(4,1,setshi); 
+ 258   1         LCD_Write_Char(5,1,setge); 
+ 259   1         LCD_Write_Char(6,1,0xDF); 
+ 260   1         LCD_Write_Char(7,1,'C');
+ 261   1        while(1)
+ 262   1         {
+ 263   2          if(cai_flag==1)
+ 264   2           {
+ 265   3             cai_flag=0;
+ 266   3             ADC_CONTR = 0x88;                //启动ad转换
+ 267   3             while(!(ADC_CONTR&0x10));         //判断转换是否结束                
+ 268   3             ADC_CONTR = ADC_CONTR&0x80;       //清ADC_FLAG与ADC_START
+ 269   3             temp = ADC_RES;                  //读转换结果
+ 270   3             displaywendu();  
+ 271   3           }
+ 272   2          pid();
+ 273   2          if(UK<=128)
+ 274   2            P20=0;                        //如果控制量太小，此值能使温度启动
+ 275   2          else
+ 276   2            AAA1=(UK-128)*100/128;            //PWM高电平持续时间
+ 277   2          VAA=AAA1;
+ 278   2         }      
+ 279   1      }
+ 280          
+ 281          void main()
+ 282          {
+ 283   1        P20=0;
+ 284   1        T0_init();
+ 285   1        ad_init();
+ 286   1        lcden=0;
+ 287   1        system_init();
+ 288   1        TMOD=0X01;
+ 289   1        time=10;                  //定时10ms
+ 290   1        t0_h=(65536-1000*time)/256;//计算定时器0初值
+ 291   1        t0_l=(65536-1000*time)%256;
+ 292   1        t0_l=t0_l+20;             //修正因初值重装而引起的定时误差
+ 293   1        TH0=t0_h;                 
+ 294   1        TL0=t0_l;  
+ 295   1        IT1=1;                    //边沿触发中断
+ 296   1        EX1=1;                    //开外部中断1
+ 297   1        ET0=1;                    //开定时中断0
+ 298   1        TR0=1;                    //启动定时器
+ 299   1        ADVALUE=YK=EK=EK_1=AEK=ZEK=0;
+ 300   1        UK=ADMARK=TKMARK=TC=0;
+ 301   1        AAA1=VAA=TK;
+ 302   1        EA=1;                     //开总中断  
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 6   
+
+ 303   1        while(1)
+ 304   1        {
+ 305   2        if(!key1)
+ 306   2          s1();
+ 307   2        if(!key2)
+ 308   2          s2();
+ 309   2        if(!key3)
+ 310   2          s3();      
+ 311   2        }
+ 312   1      }
+ 313          void pid()
+ 314          {
+ 315   1       float K,P,I,D;             //比例系数微分系数积分系数
+ 316   1       EK=SPEC-YK;                //计算偏差
+ 317   1       AEK=EK-EK_1;
+ 318   1       if((abs(EK))>IBAND||ti==0)   //判积分分离值
+ 319   1         I=0;
+ 320   1       else
+ 321   1       {
+ 322   2        ZEK=ZEK+EK;               //计算积分项
+ 323   2        if(ZEK>127)
+ 324   2          ZEK=127;
+ 325   2        if(ZEK<-128)
+ 326   2          ZEK=-128;
+ 327   2        I=ZEK*TK;
+ 328   2        I=I/ti;
+ 329   2       }
+ 330   1       P=EK;                      //比例项
+ 331   1       D=td*AEK;                  //计算微分项
+ 332   1       D=D/TK;
+ 333   1       K=kp*(P+I+D);              //计算比例项
+ 334   1       if(K>127)                  //判控制量是否溢出，溢出赋极值
+ 335   1        K=127;
+ 336   1       if(K<-128)
+ 337   1        K=-128;
+ 338   1       UK=K;
+ 339   1       EK_1=EK;
+ 340   1       UK=UK+128;
+ 341   1      }
+ 342          
+ 343          void Timer0() interrupt 1 using 1
+ 344          {
+ 345   1        TH0=t0_h;                  //重新装入初值
+ 346   1        TL0=t0_l;
+ 347   1        if(TC<TK)
+ 348   1          TC++;                     
+ 349   1        else
+ 350   1        {
+ 351   2          TKMARK=0x01;             //每秒做一次
+ 352   2          TC=0x00;
+ 353   2          ADC_CONTR = 0x88;        //启动ad转换
+ 354   2          cai_flag=1;
+ 355   2        }
+ 356   1        if (ss==3)
+ 357   1        {
+ 358   2          if(VAA!=0)              //通电时间值未到零，升温
+ 359   2          {
+ 360   3            VAA=VAA-1;
+ 361   3            P20=1;
+ 362   3          }
+ 363   2          else
+ 364   2            P20=0;
+C51 COMPILER V9.54   ALL                                                                   06/11/2017 15:22:06 PAGE 7   
+
+ 365   2        }
+ 366   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1736    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     63      22
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
